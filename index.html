@@ -1,0 +1,557 @@
+<!DOCTYPE html>
+<html lang="th">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>ระดับน้ำรอบหมู่บ้านมณียา — TESR Water Watch</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌊</text></svg>">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Thai:wght@400;500;700&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.css">
+<style>
+:root{
+  --river:#0E3B4A; --river-2:#1F6E7F; --silt:#EDF1EF; --paper:#FFFFFF; --ink:#16252B; --muted:#5B6D73; --line:#CFD9D6;
+  --safe:#2E8B57; --warn:#D99A00; --crit:#C62828; --unk:#8A979B;
+  box-sizing:border-box;
+  padding-top:env(safe-area-inset-top,0px); padding-bottom:env(safe-area-inset-bottom,0px);
+}
+@media (prefers-color-scheme:dark){ :root:not([data-theme="light"]){
+  --river:#7FC4D3; --river-2:#4FA3B5; --silt:#0C1A1F; --paper:#12242A; --ink:#E4EEF0; --muted:#94A9AE; --line:#24404A;
+}}
+*,*::before,*::after{box-sizing:inherit}
+html{scroll-padding-top:env(safe-area-inset-top,0px)}
+body{margin:0;background:var(--silt);color:var(--ink);font:16px/1.6 "IBM Plex Sans Thai",system-ui,sans-serif;font-variant-numeric:tabular-nums}
+main{max-width:960px;margin:0 auto;padding:20px 16px 48px}
+h1{font-size:1.6rem;line-height:1.25;margin:0 0 4px;color:var(--river)}
+h2{font-size:1.15rem;margin:36px 0 12px}
+p{margin:0}
+.sub{color:var(--muted);font-size:.92rem}
+button,input{font:inherit}
+button{cursor:pointer;border:1px solid var(--line);background:var(--paper);color:var(--ink);border-radius:8px;padding:8px 14px}
+button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--river-2);outline-offset:2px}
+a{color:var(--river-2)}
+
+/* freshness strip */
+.fresh{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin:14px 0 22px;padding:10px 14px;border-left:4px solid var(--river-2);background:var(--paper);border-radius:0 8px 8px 0;font-size:.92rem}
+.fresh b{font-weight:700}
+.fresh .stale{color:var(--crit);font-weight:700}
+.fresh button{margin-left:auto;padding:6px 12px}
+
+/* hero gauge */
+.hero{display:grid;grid-template-columns:120px 1fr;gap:20px;align-items:stretch;background:var(--paper);border-radius:14px;padding:18px;border:1px solid var(--line)}
+.gauge{position:relative;height:280px;border:2px solid var(--ink);border-radius:4px;overflow:hidden;
+  background:repeating-linear-gradient(to top,var(--paper) 0 14px,var(--crit) 14px 28px)}
+.gauge .scale{position:absolute;inset:0 0 0 50%;background:var(--paper)}
+.gauge .water{position:absolute;left:0;right:0;bottom:0;background:linear-gradient(to top,rgba(31,110,127,.95),rgba(31,110,127,.55));transition:height 1.2s ease}
+.gauge .bank{position:absolute;left:-2px;right:-2px;border-top:3px dashed var(--ink)}
+.gauge .bank span{position:absolute;right:4px;top:-22px;font-size:.72rem;background:var(--paper);padding:0 4px;border-radius:3px}
+.gauge .warnline{position:absolute;left:-2px;right:-2px;border-top:2px dotted var(--warn)}
+.hero-info{display:flex;flex-direction:column;gap:10px}
+.hero-info .name{font-size:1.2rem;font-weight:700;line-height:1.3}
+.big{font-size:3rem;font-weight:700;line-height:1;color:var(--river)}
+.big small{font-size:1rem;font-weight:500;color:var(--muted)}
+.facts{display:grid;grid-template-columns:auto 1fr;gap:2px 12px;font-size:.92rem}
+.facts dt{color:var(--muted)} .facts dd{margin:0}
+.pill{display:inline-flex;align-items:center;gap:8px;padding:6px 14px;border-radius:999px;font-weight:700;color:#fff;width:max-content}
+.pill.safe{background:var(--safe)} .pill.warn{background:var(--warn);color:#1b1400} .pill.crit{background:var(--crit)} .pill.unk{background:var(--unk)}
+.pill::before{content:"";width:10px;height:10px;border-radius:50%;background:currentColor;opacity:.8}
+
+.trend{font-size:.9rem}
+.trend svg{width:100%;height:64px;display:block;margin-top:4px}
+.trend .up{color:var(--crit);font-weight:700} .trend .down{color:var(--safe);font-weight:700}
+/* legend */
+.legend{display:grid;grid-template-columns:repeat(3,1fr);gap:8px;margin-top:16px;font-size:.85rem}
+.legend div{padding:8px 10px;border-radius:8px;background:var(--paper);border-top:4px solid}
+.legend .l-safe{border-color:var(--safe)} .legend .l-warn{border-color:var(--warn)} .legend .l-crit{border-color:var(--crit)}
+
+/* station list */
+.list{display:flex;flex-direction:column;gap:8px}
+.row{display:grid;grid-template-columns:8px 1fr auto;gap:12px;align-items:center;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px 12px 10px 0;overflow:hidden}
+.row .bar{align-self:stretch;border-radius:0 4px 4px 0}
+.row .t{font-weight:500;line-height:1.3}
+.row .m{font-size:.8rem;color:var(--muted)}
+.row .v{text-align:right;font-weight:700;white-space:nowrap}
+.row .v small{display:block;font-weight:500;font-size:.78rem;color:var(--muted)}
+.bg-safe{background:var(--safe)} .bg-warn{background:var(--warn)} .bg-crit{background:var(--crit)} .bg-unk{background:var(--unk)}
+
+#map{height:380px;border-radius:12px;border:1px solid var(--line);margin-top:8px}
+.leaflet-container{font:inherit}
+
+/* cctv */
+.cams{display:grid;grid-template-columns:repeat(auto-fill,minmax(220px,1fr));gap:10px}
+.cam{background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px 12px;display:flex;flex-direction:column;gap:6px}
+.cam img{width:100%;aspect-ratio:16/9;object-fit:cover;border-radius:6px;background:var(--silt)}
+.cam .m{font-size:.8rem;color:var(--muted)}
+
+.radar img{width:100%;max-width:640px;display:block;border-radius:10px;border:1px solid var(--line);background:var(--paper);min-height:120px}
+.radar .actions{align-items:center}
+.windy{width:100%;height:420px;border:1px solid var(--line);border-radius:12px;display:block}
+.hot{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:8px}
+.hot a{display:flex;flex-direction:column;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:10px 12px;text-decoration:none;color:var(--ink);font-size:.85rem}
+.hot b{font-size:1.5rem;color:var(--crit);line-height:1.2}
+.rain-bar{height:6px;border-radius:3px;background:var(--river-2);margin-top:4px}
+
+/* settings */
+details{margin-top:36px;background:var(--paper);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+summary{cursor:pointer;font-weight:700}
+.form{display:grid;grid-template-columns:repeat(auto-fill,minmax(180px,1fr));gap:10px;margin-top:12px}
+.form label{display:flex;flex-direction:column;font-size:.85rem;color:var(--muted);gap:4px}
+.form input{padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--silt);color:var(--ink);min-width:0}
+.form .wide{grid-column:1/-1}
+.actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:12px}
+.err{background:#fdecea;color:#7a1c1c;border-radius:8px;padding:10px 12px;margin:10px 0;font-size:.9rem;display:none}
+.err.show{display:block}
+footer{margin-top:28px;font-size:.8rem;color:var(--muted)}
+.overflow{overflow-x:auto}
+
+@media (max-width:560px){
+  .hero{grid-template-columns:84px 1fr;gap:14px;padding:14px}
+  .gauge{height:230px}
+  .big{font-size:2.4rem}
+  .legend{grid-template-columns:1fr}
+}
+@media (prefers-reduced-motion:reduce){.gauge .water{transition:none}}
+</style>
+</head>
+<body>
+<main>
+  <h1>ระดับน้ำรอบหมู่บ้านมณียา</h1>
+  <p class="sub">ต.ไทรม้า อ.เมืองนนทบุรี — แม่น้ำเจ้าพระยาและลำน้ำใกล้เคียง ข้อมูลสดจาก สสน. (thaiwater.net)</p>
+
+  <div class="fresh" aria-live="polite">
+    <span>ข้อมูลล่าสุดจากสถานี: <b id="dataTime">—</b></span>
+    <span>ดึงข้อมูลเมื่อ: <b id="fetchTime">—</b></span>
+    <span id="nextIn" class="sub"></span>
+    <span id="staleNote" class="stale"></span>
+    <button id="refreshBtn" type="button">อัปเดตตอนนี้</button>
+  </div>
+  <div id="err" class="err" role="alert"></div>
+
+  <section class="hero" id="hero" aria-label="สถานีแม่น้ำที่ใกล้ที่สุด">
+    <div class="gauge" aria-hidden="true">
+      <div class="scale"></div>
+      <div class="water" id="gWater" style="height:0"></div>
+      <div class="warnline" id="gWarn"></div>
+      <div class="bank" id="gBank"><span>ตลิ่ง</span></div>
+    </div>
+    <div class="hero-info">
+      <span id="hStatus" class="pill unk">กำลังโหลด</span>
+      <div class="name" id="hName">กำลังค้นหาสถานีใกล้หมู่บ้าน…</div>
+      <div class="big" id="hPct">—<small> % ความจุลำน้ำ</small></div>
+      <dl class="facts" id="hFacts"></dl>
+      <div id="hTrend" class="trend"></div>
+    </div>
+  </section>
+
+  <div class="legend">
+    <div class="l-safe"><b>ปลอดภัย</b><br>น้ำต่ำกว่า <span class="tWarn">80</span>% ของตลิ่ง</div>
+    <div class="l-warn"><b>เฝ้าระวัง</b><br><span class="tWarn">80</span>–100% ใกล้ล้นตลิ่ง</div>
+    <div class="l-crit"><b>วิกฤต</b><br>เกิน 100% หรือถึงระดับวิกฤตของสถานี</div>
+  </div>
+
+  <h2>สถานีวัดระดับน้ำในรัศมี <span id="rLabel">15</span> กม.</h2>
+  <div class="list" id="list"></div>
+
+  <h2>แผนที่</h2>
+  <div id="map" role="region" aria-label="แผนที่สถานีวัดน้ำ"></div>
+
+  <h2>กล้อง CCTV ริมน้ำใกล้เคียง</h2>
+  <div class="cams" id="cams"></div>
+
+  <h2>ฝนสะสม 24 ชม. รอบบ้าน</h2>
+  <p class="sub" id="rainSum"></p>
+  <div class="list" id="rain"></div>
+
+  <h2>ถนนน้ำท่วม (เซนเซอร์วัดน้ำบนถนน)</h2>
+  <div class="list" id="roads"></div>
+
+  <h2>เรดาร์ฝนหนองแขม (ครอบคลุมนนทบุรี)</h2>
+  <div class="radar">
+    <img id="radarImg" alt="ภาพเรดาร์ฝนหนองแขม กรมอุตุนิยมวิทยา" loading="lazy">
+    <div class="actions">
+      <button type="button" id="radarStill">ภาพล่าสุด</button>
+      <button type="button" id="radarLoop">ภาพเคลื่อนไหว</button>
+      <a href="https://weather.tmd.go.th/" target="_blank" rel="noopener">เปิดเว็บกรมอุตุฯ</a>
+    </div>
+    <p class="sub">เวลาในภาพเรดาร์ของกรมอุตุฯ เป็น UTC ให้บวก 7 ชั่วโมงเป็นเวลาไทย</p>
+  </div>
+
+  <h2>แผนที่ฝนและลม (Windy)</h2>
+  <iframe id="windy" class="windy" title="แผนที่เรดาร์ฝน Windy" loading="lazy"></iframe>
+
+  <h2>เครื่องมือจากหน่วยงานอื่น</h2>
+  <p class="sub">หน่วยงานเหล่านี้ไม่เปิดให้ดึงข้อมูลอัตโนมัติ จึงใส่ไว้เป็นลิงก์ให้เปิดดูเอง</p>
+  <div class="cams">
+    <div class="cam"><b>One Map น้ำ — ThaiWater</b><span class="m">เขื่อน การระบายน้ำ ระดับน้ำสถานีหลัก</span><a href="https://www.thaiwater.net/new4all" target="_blank" rel="noopener">เปิด</a></div>
+    <div class="cam"><b>CCTV และจุดน้ำท่วม — กรมทางหลวง</b><span class="m">สภาพถนนก่อนออกเดินทาง</span><a href="https://hdms.doh.go.th/dashboard" target="_blank" rel="noopener">เปิด</a></div>
+    <div class="cam"><b>Longdo Traffic</b><span class="m">จราจรและกล้องบนถนน</span><a href="https://traffic.longdo.com" target="_blank" rel="noopener">เปิด</a></div>
+    <div class="cam"><b>CCTV จราจร กทม.</b><span class="m">กล้องจราจรกรุงเทพฯ</span><a href="https://cpudapp.bangkok.go.th/bmatraffic" target="_blank" rel="noopener">เปิด</a></div>
+    <div class="cam"><b>Google Flood Hub</b><span class="m">พยากรณ์น้ำล้นตลิ่งล่วงหน้าหลายวัน</span><a href="https://sites.research.google/floods" target="_blank" rel="noopener">เปิด</a></div>
+    <div class="cam"><b>กทม. ฝน / น้ำท่วมถนน / คลอง</b><span class="m">ระบบของสำนักการระบายน้ำ</span>
+      <span><a href="https://weather.bangkok.go.th/rain" target="_blank" rel="noopener">ฝน</a> · <a href="https://weather.bangkok.go.th/flood/" target="_blank" rel="noopener">ถนน</a> · <a href="https://weather.bangkok.go.th/KlongMap" target="_blank" rel="noopener">คลอง</a></span></div>
+  </div>
+
+  <h2>สายด่วนฉุกเฉิน</h2>
+  <div class="hot">
+    <a href="tel:1784"><b>1784</b>ปภ. ขอความช่วยเหลือ / อพยพ</a>
+    <a href="tel:1669"><b>1669</b>เจ็บป่วยฉุกเฉิน</a>
+    <a href="tel:1130"><b>1130</b>กฟน. ไฟฟ้า กทม. นนทบุรี</a>
+    <a href="tel:1586"><b>1586</b>กรมทางหลวง</a>
+    <a href="tel:1146"><b>1146</b>กรมทางหลวงชนบท</a>
+    <a href="https://line.me/R/ti/p/@1784DDPM" target="_blank" rel="noopener"><b>LINE</b>@1784DDPM</a>
+  </div>
+
+  <details>
+    <summary>ตั้งค่า</summary>
+    <div class="form">
+      <label>ละติจูดหมู่บ้าน<input id="sLat" inputmode="decimal"></label>
+      <label>ลองจิจูดหมู่บ้าน<input id="sLng" inputmode="decimal"></label>
+      <label>รัศมีค้นหา (กม., สูงสุด 30 ตามที่ Actions เก็บ)<input id="sRad" inputmode="numeric"></label>
+      <label>เริ่มเฝ้าระวังที่ (% ตลิ่ง)<input id="sWarn" inputmode="numeric"></label>
+      <label>อัปเดตอัตโนมัติทุก (นาที)<input id="sEvery" inputmode="numeric"></label>
+      <label class="wide">Proxy URL (ถ้าเบราว์เซอร์ดึง API ตรงไม่ได้ เช่น https://water.xxx.workers.dev)<input id="sProxy" placeholder="เว้นว่าง = ดึงตรงจาก thaiwater"></label>
+    </div>
+    <div class="actions">
+      <button id="saveBtn" type="button">บันทึกและโหลดใหม่</button>
+      <button id="gpsBtn" type="button">ใช้ตำแหน่งปัจจุบัน</button>
+      <button id="resetBtn" type="button">คืนค่าเริ่มต้น</button>
+    </div>
+  </details>
+
+  <footer>
+    <p>แหล่งข้อมูล: คลังข้อมูลน้ำแห่งชาติ สสน. (api-v3.thaiwater.net) — ระดับน้ำโทรมาตร, ระดับน้ำคลอง, ฝน 24 ชม., ถนนน้ำท่วม, กล้อง CCTV · เรดาร์: กรมอุตุนิยมวิทยา · แผนที่ฝน: Windy · อ้างอิงเพิ่มเติม:
+      <a href="https://www.thaiwater.net/water/wl" target="_blank" rel="noopener">thaiwater.net</a>,
+      <a href="https://www.thaiclouderp.com/video/pakkret_water_report.html" target="_blank" rel="noopener">CCTV ระดับน้ำปากเกร็ด</a></p>
+    <p id="mode"></p>
+    <p>ใช้ประกอบการตัดสินใจเท่านั้น โปรดติดตามประกาศทางการจาก ปภ. และเทศบาลนครนนทบุรีควบคู่กัน</p>
+  </footer>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>
+<script>
+const API = 'https://api-v3.thaiwater.net/api/v1/thaiwater30';
+const SNAPSHOT = 'data/latest.json', HISTORY = 'data/history.json'; // เขียนโดย GitHub Actions ทุก 10 นาที
+let HIST = null;
+// ตำแหน่งโดยประมาณของหมู่บ้านมณียา ต.ไทรม้า — แก้ในหน้า "ตั้งค่า" ให้ตรงหมุด Google Maps ได้
+const DEFAULTS = { lat: 13.8600, lng: 100.4800, radius: 15, warnPct: 80, every: 5, proxy: '' };
+let cfg = load();
+let map, layer, timer, countdown, nextAt = 0;
+
+function load(){ try{ return {...DEFAULTS, ...JSON.parse(localStorage.getItem('tesr-water')||'{}')}; }catch{ return {...DEFAULTS}; } }
+function save(){ try{ localStorage.setItem('tesr-water', JSON.stringify(cfg)); }catch{} }
+const $ = id => document.getElementById(id);
+
+/* ---------- helpers ---------- */
+const txt = x => !x ? '' : typeof x === 'string' ? x : (x.th || x.en || Object.values(x).find(v => typeof v === 'string') || '');
+const num = v => { const n = parseFloat(v); return Number.isFinite(n) ? n : null; };
+function parseTime(s){
+  if(!s) return null;
+  let t = String(s).trim().replace(' ', 'T');
+  if(!/[zZ]|[+-]\d\d:?\d\d$/.test(t)) t += '+07:00';
+  const d = new Date(t); return isNaN(d) ? null : d;
+}
+const fmt = d => d ? d.toLocaleString('th-TH', {timeZone:'Asia/Bangkok', day:'numeric', month:'short', year:'2-digit', hour:'2-digit', minute:'2-digit'}) + ' น.' : '—';
+function ago(d){
+  if(!d) return '';
+  const m = Math.round((Date.now() - d) / 60000);
+  if(m < 1) return 'เมื่อสักครู่'; if(m < 60) return m + ' นาทีที่แล้ว';
+  const h = Math.floor(m / 60); return h < 24 ? h + ' ชม. ' + (m % 60) + ' นาทีที่แล้ว' : Math.floor(h / 24) + ' วันที่แล้ว';
+}
+function km(a, b, c, d){
+  const R = 6371, r = x => x * Math.PI / 180;
+  const h = Math.sin(r(c - a) / 2) ** 2 + Math.cos(r(a)) * Math.cos(r(c)) * Math.sin(r(d - b) / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function findArrays(obj, test, out = []){
+  if(Array.isArray(obj)){ if(obj.length && typeof obj[0] === 'object' && test(obj[0])) out.push(obj); else obj.forEach(o => findArrays(o, test, out)); }
+  else if(obj && typeof obj === 'object') Object.values(obj).forEach(o => findArrays(o, test, out));
+  return out;
+}
+const pick = (o, re) => { if(!o) return undefined; const k = Object.keys(o).find(k => re.test(k)); return k ? o[k] : undefined; };
+
+async function getJSON(path){
+  const bases = cfg.proxy ? [cfg.proxy.replace(/\/$/, ''), API] : [API];
+  let lastErr;
+  for(const base of bases){
+    try{
+      const r = await fetch(base + path, {headers:{Accept:'application/json'}, cache:'no-store'});
+      if(!r.ok) throw new Error('HTTP ' + r.status);
+      $('mode').dataset.live = (base === API ? 'thaiwater โดยตรง' : 'proxy ' + base);
+      return await r.json();
+    }catch(e){ lastErr = e; }
+  }
+  throw lastErr;
+}
+
+/* ---------- status ---------- */
+function classify(s){
+  if(s.critMsl != null && s.msl != null && s.msl >= s.critMsl) return 'crit';
+  if(s.pct != null){ if(s.pct >= 100) return 'crit'; if(s.pct >= cfg.warnPct) return 'warn'; return 'safe'; }
+  if(s.bank != null && s.msl != null){ if(s.msl >= s.bank) return 'crit'; if(s.msl >= s.bank - 0.5) return 'warn'; return 'safe'; }
+  return 'unk';
+}
+const LABEL = {safe:'ปลอดภัย', warn:'เฝ้าระวัง', crit:'วิกฤต', unk:'ไม่มีเกณฑ์'};
+
+function normalize(r, kind){
+  const st = r.station || r.canal_station || r;
+  const lat = num(st.tele_station_lat ?? st.canal_station_lat ?? pick(st, /lat/i));
+  const lng = num(st.tele_station_long ?? st.canal_station_long ?? pick(st, /lon|lng/i));
+  const msl = num(r.waterlevel_msl ?? r.canal_waterlevel_value ?? r.waterlevel_value);
+  let pct = num(r.storage_percent);
+  const left = num(st.left_bank), right = num(st.right_bank);
+  const bank = num(st.min_bank) ?? ((left != null && right != null) ? Math.min(left, right) : (left ?? right));
+  if(pct == null && bank != null && msl != null && num(st.ground_level) != null){
+    const g = num(st.ground_level); if(bank > g) pct = (msl - g) / (bank - g) * 100;
+  }
+  const s = {
+    id: String(st.id ?? st.tele_station_oldcode ?? txt(st.tele_station_name)),
+    kind, lat, lng, msl, pct, bank,
+    critMsl: num(st.critical_level_msl ?? r.critical_level_msl),
+    warnMsl: num(st.warning_level_msl ?? r.warning_level_msl),
+    name: txt(st.tele_station_name || st.canal_station_name || st.station_name || pick(st, /name/i)) || 'ไม่ระบุชื่อ',
+    place: [txt(r.geocode?.tumbon_name), txt(r.geocode?.amphoe_name), txt(r.geocode?.province_name)].filter(Boolean).join(' '),
+    river: txt(r.river_name || st.river_name || r.basin?.basin_name),
+    agency: txt(r.agency?.agency_shortname || r.agency?.agency_name),
+    discharge: num(r.discharge),
+    time: parseTime(r.waterlevel_datetime || r.canal_waterlevel_datetime || pick(r, /datetime/i))
+  };
+  s.status = classify(s);
+  return s;
+}
+
+/* ---------- load ---------- */
+async function refresh(){
+  $('refreshBtn').disabled = true; $('err').classList.remove('show');
+  const errors = [];
+  let snap = null;
+  try{
+    const r = await fetch(SNAPSHOT + '?t=' + Date.now(), {cache:'no-store'});
+    if(r.ok){ const j = await r.json(); if(Date.now() - new Date(j.generated_at) < 3 * 3600e3) snap = j; }
+  }catch{}
+  try{ const r = await fetch(HISTORY + '?t=' + Date.now(), {cache:'no-store'}); HIST = r.ok ? await r.json() : null; }catch{ HIST = null; }
+  const src = (key, path) => snap && Array.isArray(snap.data?.[key]) && snap.sources?.[key]?.fetched_at
+    ? Promise.resolve(snap.data[key]) : getJSON(path);
+  $('mode').textContent = snap ? 'ข้อมูลจาก GitHub Actions รอบ ' + fmt(new Date(snap.generated_at)) : 'ดึงสดจาก API (ไม่พบไฟล์ data/latest.json ล่าสุด)';
+  const [wl, canal, cctv, rain, road] = await Promise.allSettled([
+    src('waterlevel', '/public/waterlevel_load'), src('canal', '/public/canal_waterlevel'), src('cctv', '/analyst/cctv'),
+    src('rain', '/public/rain_24h'), src('flood_road', '/public/flood_road')
+  ]);
+  renderRain(rain.status === 'fulfilled' ? rain.value : null);
+  renderRoads(road.status === 'fulfilled' ? road.value : null);
+  if(rain.status !== 'fulfilled') errors.push('ฝน 24 ชม.');
+  setRadar(radarMode);
+  let stations = [];
+  if(wl.status === 'fulfilled'){
+    findArrays(wl.value, o => 'waterlevel_msl' in o || 'storage_percent' in o).flat().forEach(r => stations.push(normalize(r, 'river')));
+  } else errors.push('ระดับน้ำแม่น้ำ (' + wl.reason.message + ')');
+  if(canal.status === 'fulfilled'){
+    findArrays(canal.value, o => Object.keys(o).some(k => /waterlevel/i.test(k))).flat().forEach(r => stations.push(normalize(r, 'canal')));
+  } else errors.push('ระดับน้ำคลอง');
+
+  stations = stations.filter(s => s.lat && s.lng).map(s => ({...s, dist: km(cfg.lat, cfg.lng, s.lat, s.lng)}))
+    .filter(s => s.dist <= cfg.radius).sort((a, b) => a.dist - b.dist);
+
+  renderHero(stations); renderList(stations); renderMap(stations);
+  renderCams(cctv.status === 'fulfilled' ? cctv.value : null);
+  if(cctv.status !== 'fulfilled') errors.push('กล้อง CCTV');
+
+  const latest = stations.map(s => s.time).filter(Boolean).sort((a, b) => b - a)[0];
+  $('dataTime').textContent = latest ? fmt(latest) + ' (' + ago(latest) + ')' : '—';
+  $('fetchTime').textContent = snap ? fmt(new Date(snap.generated_at)) + ' (' + ago(new Date(snap.generated_at)) + ')' : fmt(new Date());
+  $('staleNote').textContent = latest && Date.now() - latest > 3 * 3600e3 ? 'ข้อมูลเก่ากว่า 3 ชม. — สถานีอาจขัดข้อง' : '';
+
+  if(errors.length){
+    const e = $('err');
+    e.innerHTML = 'ดึงข้อมูลไม่สำเร็จ: ' + errors.join(', ') +
+      (cfg.proxy ? '' : '<br>ถ้าขึ้นทุกครั้ง แปลว่าเบราว์เซอร์ถูกบล็อก CORS — ติดตั้ง proxy (ไฟล์ worker.js) แล้วใส่ URL ใน "ตั้งค่า"');
+    e.classList.add('show');
+  }
+  $('refreshBtn').disabled = false;
+  schedule();
+}
+
+/* ---------- render ---------- */
+function renderHero(list){
+  const s = list.find(x => x.kind === 'river' && (x.pct != null || x.msl != null)) || list[0];
+  if(!s){
+    $('hName').textContent = 'ไม่พบสถานีในรัศมี ' + cfg.radius + ' กม. — ลองเพิ่มรัศมีในตั้งค่า';
+    $('hStatus').className = 'pill unk'; $('hStatus').textContent = 'ไม่มีข้อมูล'; return;
+  }
+  $('hStatus').className = 'pill ' + s.status; $('hStatus').textContent = LABEL[s.status];
+  $('hName').textContent = s.name + (s.river ? ' — ' + s.river : '');
+  $('hPct').innerHTML = s.pct != null ? Math.round(s.pct) + '<small> % ความจุลำน้ำ</small>' : (s.msl?.toFixed(2) ?? '—') + '<small> ม.รทก.</small>';
+  const rows = [
+    ['ระดับน้ำ', s.msl != null ? s.msl.toFixed(2) + ' ม.รทก.' : '—'],
+    ['ระดับตลิ่ง', s.bank != null ? s.bank.toFixed(2) + ' ม.รทก.' : '—'],
+    ['ห่างตลิ่ง', s.bank != null && s.msl != null ? (s.bank - s.msl).toFixed(2) + ' ม.' : '—'],
+    ['อัตราการไหล', s.discharge != null ? s.discharge.toLocaleString() + ' ลบ.ม./วิ' : '—'],
+    ['ระยะจากบ้าน', s.dist.toFixed(1) + ' กม.'],
+    ['เวลาวัด', fmt(s.time) + (s.time ? ' (' + ago(s.time) + ')' : '')]
+  ];
+  $('hFacts').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
+  renderTrend(s);
+  // gauge: 0–130% scale, bank line at 100%
+  const top = 130, h = p => Math.max(0, Math.min(p, top)) / top * 100;
+  $('gWater').style.height = (s.pct != null ? h(s.pct) : 0) + '%';
+  $('gBank').style.bottom = h(100) + '%'; $('gBank').style.top = 'auto';
+  $('gWarn').style.bottom = h(cfg.warnPct) + '%';
+}
+
+function renderList(list){
+  $('rLabel').textContent = cfg.radius;
+  document.querySelectorAll('.tWarn').forEach(e => e.textContent = cfg.warnPct);
+  if(!list.length){ $('list').innerHTML = '<p class="sub">ยังไม่มีสถานีให้แสดง</p>'; return; }
+  $('list').innerHTML = list.slice(0, 20).map(s => `
+    <div class="row">
+      <span class="bar bg-${s.status}"></span>
+      <div><div class="t">${esc(s.name)}</div>
+        <div class="m">${s.kind === 'canal' ? 'คลอง' : 'แม่น้ำ'} · ${s.dist.toFixed(1)} กม. · ${esc(s.place || s.agency)} · ${s.time ? ago(s.time) : 'ไม่ทราบเวลา'}</div></div>
+      <div class="v">${s.pct != null ? Math.round(s.pct) + '%' : (s.msl != null ? s.msl.toFixed(2) + ' ม.' : '—')}<small>${LABEL[s.status]}</small></div>
+    </div>`).join('');
+}
+
+function renderMap(list){
+  if(!window.L) return;
+  if(!map){
+    map = L.map('map', {scrollWheelZoom:false}).setView([cfg.lat, cfg.lng], 12);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:18, attribution:'© OpenStreetMap'}).addTo(map);
+    layer = L.layerGroup().addTo(map);
+  }
+  layer.clearLayers();
+  const col = {safe:'#2E8B57', warn:'#D99A00', crit:'#C62828', unk:'#8A979B'};
+  L.marker([cfg.lat, cfg.lng]).bindPopup('<b>หมู่บ้านมณียา</b><br>TESR HQ').addTo(layer);
+  L.circle([cfg.lat, cfg.lng], {radius:cfg.radius * 1000, color:'#1F6E7F', weight:1, fill:false, dashArray:'4 6'}).addTo(layer);
+  list.forEach(s => L.circleMarker([s.lat, s.lng], {radius:9, color:'#fff', weight:2, fillColor:col[s.status], fillOpacity:1})
+    .bindPopup(`<b>${esc(s.name)}</b><br>${LABEL[s.status]}${s.pct != null ? ' · ' + Math.round(s.pct) + '%' : ''}<br>${s.msl != null ? s.msl.toFixed(2) + ' ม.รทก.' : ''}<br>${fmt(s.time)}`).addTo(layer));
+}
+
+function renderCams(data){
+  const box = $('cams');
+  let cams = [];
+  if(data){
+    findArrays(data, o => Object.keys(o).some(k => /lat/i.test(k))).flat().forEach(c => {
+      const lat = num(pick(c, /lat/i)), lng = num(pick(c, /lon|lng/i));
+      if(!lat || !lng) return;
+      const urls = Object.values(c).filter(v => typeof v === 'string' && /^https?:\/\//.test(v));
+      const img = urls.find(u => /\.(jpe?g|png|gif|webp)(\?|$)/i.test(u));
+      const link = urls.find(u => u !== img) || img;
+      cams.push({lat, lng, img, link, name: txt(pick(c, /title|name/i)) || 'กล้อง CCTV', dist: km(cfg.lat, cfg.lng, lat, lng)});
+    });
+    cams = cams.filter(c => c.dist <= cfg.radius * 2).sort((a, b) => a.dist - b.dist).slice(0, 8);
+  }
+  const fixed = `<div class="cam"><b>CCTV ระดับน้ำปากเกร็ด</b><span class="m">ระบบรายงานระดับน้ำผ่านกล้อง (pakkret CCS)</span>
+    <a href="https://www.thaiclouderp.com/video/pakkret_water_report.html" target="_blank" rel="noopener">เปิดดูกล้อง</a></div>`;
+  box.innerHTML = fixed + cams.map(c => `<div class="cam">
+      ${c.img ? `<img src="${c.img}" alt="${esc(c.name)}" loading="lazy">` : ''}
+      <b>${esc(c.name)}</b><span class="m">${c.dist.toFixed(1)} กม. จากหมู่บ้าน</span>
+      ${c.link ? `<a href="${c.link}" target="_blank" rel="noopener">เปิดดูกล้อง</a>` : ''}</div>`).join('');
+}
+
+/* ---------- trend from history.json ---------- */
+function renderTrend(s){
+  const box = $('hTrend'), h = HIST?.stations?.[s.id];
+  const pts = (h?.points || []).map(p => ({t: parseTime(p[0]), v: num(p[1])})).filter(p => p.t && p.v != null);
+  if(pts.length < 2){ box.innerHTML = '<span class="sub">กราฟแนวโน้มจะขึ้นหลัง GitHub Actions เก็บข้อมูลได้สักระยะ</span>'; return; }
+  const last = pts[pts.length - 1];
+  const past = [...pts].reverse().find(p => last.t - p.t >= 3 * 3600e3) || pts[0];
+  const dcm = Math.round((last.v - past.v) * 100), hrs = ((last.t - past.t) / 3600e3).toFixed(0);
+  const word = dcm > 2 ? `<span class="up">▲ น้ำขึ้น ${dcm} ซม.</span>` : dcm < -2 ? `<span class="down">▼ น้ำลง ${-dcm} ซม.</span>` : '<b>ทรงตัว</b>';
+  const vs = pts.map(p => p.v).concat(s.bank != null ? [s.bank] : []);
+  const lo = Math.min(...vs) - 0.1, hi = Math.max(...vs) + 0.1, t0 = pts[0].t, t1 = last.t;
+  const X = t => ((t - t0) / Math.max(1, t1 - t0)) * 300, Y = v => 60 - (v - lo) / (hi - lo) * 56;
+  const line = pts.map(p => X(p.t).toFixed(1) + ',' + Y(p.v).toFixed(1)).join(' ');
+  const bank = s.bank != null ? `<line x1="0" x2="300" y1="${Y(s.bank)}" y2="${Y(s.bank)}" stroke="var(--crit)" stroke-dasharray="4 4"/>` : '';
+  box.innerHTML = `แนวโน้ม ${hrs} ชม.: ${word}
+    <svg viewBox="0 0 300 64" preserveAspectRatio="none" role="img" aria-label="กราฟระดับน้ำย้อนหลัง">
+      ${bank}<polyline points="${line}" fill="none" stroke="var(--river-2)" stroke-width="2" vector-effect="non-scaling-stroke"/></svg>
+    <span class="sub">ย้อนหลัง ${Math.round((t1 - t0) / 3600e3)} ชม.${s.bank != null ? ' · เส้นประแดง = ตลิ่ง' : ''}</span>`;
+}
+
+/* ---------- rain / flood road / radar ---------- */
+function stationPos(r){
+  const st = r.station || r;
+  const lat = num(st.tele_station_lat ?? pick(st, /lat/i) ?? pick(r, /lat/i));
+  const lng = num(st.tele_station_long ?? pick(st, /lon|lng/i) ?? pick(r, /lon|lng/i));
+  return (lat && lng) ? {lat, lng, dist: km(cfg.lat, cfg.lng, lat, lng)} : null;
+}
+function rainLevel(mm){ return mm >= 90 ? ['crit','ฝนหนักมาก'] : mm >= 35 ? ['warn','ฝนหนัก'] : mm >= 10 ? ['safe','ฝนปานกลาง'] : ['safe', mm > 0 ? 'ฝนเล็กน้อย' : 'ไม่มีฝน']; }
+
+function renderRain(data){
+  const box = $('rain');
+  if(!data){ box.innerHTML = '<p class="sub">ดึงข้อมูลฝนไม่สำเร็จ</p>'; $('rainSum').textContent = ''; return; }
+  const rows = findArrays(data, o => 'rain_24h' in o).flat().map(r => {
+    const p = stationPos(r); if(!p || p.dist > cfg.radius) return null;
+    return {...p, mm: num(r.rain_24h) ?? 0, name: txt(r.station?.tele_station_name || pick(r.station, /name/i)) || 'สถานีฝน',
+      place: txt(r.geocode?.amphoe_name), time: parseTime(r.rainfall_datetime || pick(r, /datetime/i))};
+  }).filter(Boolean).sort((a, b) => a.dist - b.dist);
+  if(!rows.length){ box.innerHTML = '<p class="sub">ไม่มีสถานีวัดฝนในรัศมีนี้</p>'; $('rainSum').textContent = ''; return; }
+  const max = rows.reduce((m, r) => r.mm > m.mm ? r : m, rows[0]);
+  $('rainSum').textContent = `ฝนมากที่สุดในรัศมี ${cfg.radius} กม.: ${max.mm.toFixed(1)} มม. ที่ ${max.name} (${rows.length} สถานี)`;
+  const top = Math.max(50, max.mm);
+  box.innerHTML = rows.slice(0, 8).map(r => { const [lv, lb] = rainLevel(r.mm); return `
+    <div class="row"><span class="bar bg-${lv}"></span>
+      <div><div class="t">${esc(r.name)}</div><div class="m">${r.dist.toFixed(1)} กม. · ${esc(r.place)} · ${r.time ? ago(r.time) : ''}</div>
+        <div class="rain-bar" style="width:${Math.max(2, r.mm / top * 100)}%"></div></div>
+      <div class="v">${r.mm.toFixed(1)} มม.<small>${lb}</small></div></div>`; }).join('');
+}
+
+function renderRoads(data){
+  const box = $('roads');
+  if(!data){ box.innerHTML = '<p class="sub">ดึงข้อมูลถนนไม่สำเร็จ</p>'; return; }
+  const rows = findArrays(data, o => Object.keys(o).some(k => /lat/i.test(k)) || 'station' in o).flat().map(r => {
+    const p = stationPos(r); if(!p || p.dist > cfg.radius) return null;
+    const cm = num(r.flood_value ?? r.value ?? pick(r, /flood|level/i));
+    return {...p, cm, name: txt(r.station?.tele_station_name || pick(r.station, /name/i) || pick(r, /name/i)) || 'จุดวัดบนถนน',
+      time: parseTime(pick(r, /datetime|date/i))};
+  }).filter(Boolean).sort((a, b) => (b.cm ?? 0) - (a.cm ?? 0));
+  if(!rows.length){ box.innerHTML = `<p class="sub">ไม่มีเซนเซอร์ถนนในรัศมี ${cfg.radius} กม. (ส่วนใหญ่ติดตั้งในกรุงเทพฯ)</p>`; return; }
+  box.innerHTML = rows.slice(0, 10).map(r => { const lv = r.cm == null ? 'unk' : r.cm >= 20 ? 'crit' : r.cm > 5 ? 'warn' : 'safe'; return `
+    <div class="row"><span class="bar bg-${lv}"></span>
+      <div><div class="t">${esc(r.name)}</div><div class="m">${r.dist.toFixed(1)} กม. · ${r.time ? ago(r.time) : ''}</div></div>
+      <div class="v">${r.cm != null ? r.cm.toFixed(0) + ' ซม.' : '—'}<small>${lv === 'crit' ? 'รถเล็กควรเลี่ยง' : lv === 'warn' ? 'น้ำขัง' : lv === 'safe' ? 'ผ่านได้' : ''}</small></div></div>`; }).join('');
+}
+
+let radarMode = 'still';
+function setRadar(mode){
+  radarMode = mode;
+  const src = mode === 'loop' ? 'https://weather.tmd.go.th/pic_bmankLoop.gif' : 'https://weather.tmd.go.th/pic_bmankm.jpg';
+  const img = $('radarImg');
+  img.onerror = () => { img.alt = 'โหลดภาพเรดาร์ไม่ได้ — เรดาร์อาจปิดปรับปรุง ลองกด "เปิดเว็บกรมอุตุฯ"'; };
+  img.src = src + '?t=' + Math.floor(Date.now() / 60000);
+}
+$('radarStill').onclick = () => setRadar('still');
+$('radarLoop').onclick = () => setRadar('loop');
+function setWindy(){
+  $('windy').src = `https://embed.windy.com/embed2.html?lat=${cfg.lat}&lon=${cfg.lng}&detailLat=${cfg.lat}&detailLon=${cfg.lng}&zoom=9&level=surface&overlay=rain&product=ecmwf&menu=&message=true&marker=true&calendar=now&type=map&location=coordinates&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1`;
+}
+
+const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+
+/* ---------- schedule & settings ---------- */
+function schedule(){
+  clearTimeout(timer); clearInterval(countdown);
+  nextAt = Date.now() + cfg.every * 60000;
+  timer = setTimeout(refresh, cfg.every * 60000);
+  countdown = setInterval(() => {
+    const s = Math.max(0, Math.round((nextAt - Date.now()) / 1000));
+    $('nextIn').textContent = 'อัปเดตอัตโนมัติใน ' + Math.floor(s / 60) + ':' + String(s % 60).padStart(2, '0');
+  }, 1000);
+}
+document.addEventListener('visibilitychange', () => { if(!document.hidden && Date.now() > nextAt) refresh(); });
+
+function fillForm(){ $('sLat').value = cfg.lat; $('sLng').value = cfg.lng; $('sRad').value = cfg.radius; $('sWarn').value = cfg.warnPct; $('sEvery').value = cfg.every; $('sProxy').value = cfg.proxy; }
+$('saveBtn').onclick = () => {
+  cfg = {lat: num($('sLat').value) ?? DEFAULTS.lat, lng: num($('sLng').value) ?? DEFAULTS.lng,
+    radius: num($('sRad').value) || DEFAULTS.radius, warnPct: num($('sWarn').value) || DEFAULTS.warnPct,
+    every: Math.max(1, num($('sEvery').value) || DEFAULTS.every), proxy: $('sProxy').value.trim()};
+  save(); if(map) map.setView([cfg.lat, cfg.lng], 12); setWindy(); refresh();
+};
+$('gpsBtn').onclick = () => navigator.geolocation?.getCurrentPosition(p => { $('sLat').value = p.coords.latitude.toFixed(5); $('sLng').value = p.coords.longitude.toFixed(5); });
+$('resetBtn').onclick = () => { cfg = {...DEFAULTS}; save(); fillForm(); refresh(); };
+$('refreshBtn').onclick = refresh;
+
+fillForm(); setWindy(); refresh();
+</script>
+</body>
+</html>
