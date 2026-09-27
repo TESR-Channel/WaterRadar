@@ -125,11 +125,13 @@ def main():
     for r in data["waterlevel"] + data["canal"]:
         st = r.get("station") or r.get("canal_station") or r
         sid = str(st.get("id") or st.get("tele_station_oldcode") or text(st.get("tele_station_name")))
-        t = r.get("waterlevel_datetime") or r.get("canal_waterlevel_datetime")
-        msl = num(r.get("waterlevel_msl", r.get("canal_waterlevel_value")))
+        if "canal_value" in r:
+            sid = "canal-" + sid
+        t = r.get("waterlevel_datetime") or r.get("canal_datetime")
+        msl = num(r.get("waterlevel_msl", r.get("canal_value")))
         if not sid or not t or msl is None:
             continue
-        h = hist["stations"].setdefault(sid, {"name": text(st.get("tele_station_name") or st.get("canal_station_name")), "points": []})
+        h = hist["stations"].setdefault(sid, {"name": text(st.get("tele_station_name") or st.get("canal_name")), "points": []})
         if not h["points"] or h["points"][-1][0] != t:
             h["points"].append([t, msl, num(r.get("storage_percent"))])
 
