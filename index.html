@@ -73,7 +73,7 @@ a{color:var(--river-2)}
 .row .m{font-size:.8rem;color:var(--muted)}
 .row .v{text-align:right;font-weight:700;white-space:nowrap}
 .row .v small{display:block;font-weight:500;font-size:.78rem;color:var(--muted)}
-.bg-safe{background:var(--safe)} .bg-warn{background:var(--warn)} .bg-crit{background:var(--crit)} .bg-unk{background:var(--unk)}
+.bg-safe{background:var(--safe)} .bg-warn{background:var(--warn)} .bg-crit{background:var(--crit)} .bg-unk,.bg-stale{background:var(--unk)}
 
 #map{height:380px;border-radius:12px;border:1px solid var(--line);margin-top:8px}
 .leaflet-container{font:inherit}
@@ -287,36 +287,39 @@ async function getJSON(path){
 /* ---------- status ---------- */
 function classify(s){
   if(s.critMsl != null && s.msl != null && s.msl >= s.critMsl) return 'crit';
+  if(s.warnMsl != null && s.msl != null && s.pct == null && s.msl >= s.warnMsl) return 'warn';
   if(s.pct != null){ if(s.pct >= 100) return 'crit'; if(s.pct >= cfg.warnPct) return 'warn'; return 'safe'; }
   if(s.bank != null && s.msl != null){ if(s.msl >= s.bank) return 'crit'; if(s.msl >= s.bank - 0.5) return 'warn'; return 'safe'; }
   return 'unk';
 }
-const LABEL = {safe:'ปลอดภัย', warn:'เฝ้าระวัง', crit:'วิกฤต', unk:'ไม่มีเกณฑ์'};
+const LABEL = {safe:'ปลอดภัย', warn:'เฝ้าระวัง', crit:'วิกฤต', unk:'ไม่มีเกณฑ์', stale:'ข้อมูลเก่า'};
+const STALE_MS = 6 * 3600e3; // เซนเซอร์ที่ไม่ส่งค่าเกิน 6 ชม. ถือว่าขัดข้อง ไม่เอามาตัดสินสถานะ
+const fresh = t => t && Date.now() - t < STALE_MS;
 
 function normalize(r, kind){
   const st = r.station || r.canal_station || r;
-  const lat = num(st.tele_station_lat ?? st.canal_station_lat ?? pick(st, /lat/i));
-  const lng = num(st.tele_station_long ?? st.canal_station_long ?? pick(st, /lon|lng/i));
-  const msl = num(r.waterlevel_msl ?? r.canal_waterlevel_value ?? r.waterlevel_value);
+  const lat = num(st.tele_station_lat ?? st.canal_lat ?? pick(st, /lat/i));
+  const lng = num(st.tele_station_long ?? st.canal_long ?? pick(st, /lon|lng/i));
+  const msl = num(r.waterlevel_msl ?? r.canal_value ?? r.waterlevel_value);
   let pct = num(r.storage_percent);
   const left = num(st.left_bank), right = num(st.right_bank);
-  const bank = num(st.min_bank) ?? ((left != null && right != null) ? Math.min(left, right) : (left ?? right));
+  const bank = num(st.min_bank) ?? ((left != null && right != null) ? Math.min(left, right) : (left ?? right)) ?? num(st.bank);
   if(pct == null && bank != null && msl != null && num(st.ground_level) != null){
     const g = num(st.ground_level); if(bank > g) pct = (msl - g) / (bank - g) * 100;
   }
   const s = {
-    id: String(st.id ?? st.tele_station_oldcode ?? txt(st.tele_station_name)),
+    id: (kind === 'canal' ? 'canal-' : '') + String(st.id ?? st.tele_station_oldcode ?? txt(st.tele_station_name)),
     kind, lat, lng, msl, pct, bank,
-    critMsl: num(st.critical_level_msl ?? r.critical_level_msl),
-    warnMsl: num(st.warning_level_msl ?? r.warning_level_msl),
-    name: txt(st.tele_station_name || st.canal_station_name || st.station_name || pick(st, /name/i)) || 'ไม่ระบุชื่อ',
+    critMsl: num(st.critical_level_msl ?? r.critical_level_msl ?? st.critical_level),
+    warnMsl: num(st.warning_level_msl ?? r.warning_level_msl ?? st.warning_level),
+    name: txt(st.tele_station_name || st.canal_name || st.station_name || pick(st, /name/i)) || 'ไม่ระบุชื่อ',
     place: [txt(r.geocode?.tumbon_name), txt(r.geocode?.amphoe_name), txt(r.geocode?.province_name)].filter(Boolean).join(' '),
     river: txt(r.river_name || st.river_name || r.basin?.basin_name),
     agency: txt(r.agency?.agency_shortname || r.agency?.agency_name),
     discharge: num(r.discharge),
-    time: parseTime(r.waterlevel_datetime || r.canal_waterlevel_datetime || pick(r, /datetime/i))
+    time: parseTime(r.waterlevel_datetime || r.canal_datetime || pick(r, /datetime/i))
   };
-  s.status = classify(s);
+  s.status = fresh(s.time) ? classify(s) : 'stale';
   return s;
 }
 
@@ -346,7 +349,7 @@ async function refresh(){
     findArrays(wl.value, o => 'waterlevel_msl' in o || 'storage_percent' in o).flat().forEach(r => stations.push(normalize(r, 'river')));
   } else errors.push('ระดับน้ำแม่น้ำ (' + wl.reason.message + ')');
   if(canal.status === 'fulfilled'){
-    findArrays(canal.value, o => Object.keys(o).some(k => /waterlevel/i.test(k))).flat().forEach(r => stations.push(normalize(r, 'canal')));
+    findArrays(canal.value, o => 'canal_value' in o || 'canal_datetime' in o).flat().forEach(r => stations.push(normalize(r, 'canal')));
   } else errors.push('ระดับน้ำคลอง');
 
   stations = stations.filter(s => s.lat && s.lng).map(s => ({...s, dist: km(cfg.lat, cfg.lng, s.lat, s.lng)}))
@@ -356,7 +359,7 @@ async function refresh(){
   renderCams(cctv.status === 'fulfilled' ? cctv.value : null);
   if(cctv.status !== 'fulfilled') errors.push('กล้อง CCTV');
 
-  const latest = stations.map(s => s.time).filter(Boolean).sort((a, b) => b - a)[0];
+  const latest = stations.map(s => s.time).filter(fresh).sort((a, b) => b - a)[0];
   $('dataTime').textContent = latest ? fmt(latest) + ' (' + ago(latest) + ')' : '—';
   $('fetchTime').textContent = snap ? fmt(new Date(snap.generated_at)) + ' (' + ago(new Date(snap.generated_at)) + ')' : fmt(new Date());
   $('staleNote').textContent = latest && Date.now() - latest > 3 * 3600e3 ? 'ข้อมูลเก่ากว่า 3 ชม. — สถานีอาจขัดข้อง' : '';
@@ -373,7 +376,8 @@ async function refresh(){
 
 /* ---------- render ---------- */
 function renderHero(list){
-  const s = list.find(x => x.kind === 'river' && (x.pct != null || x.msl != null)) || list[0];
+  const ok = x => fresh(x.time) && (x.pct != null || x.msl != null);
+  const s = list.find(x => ok(x) && /เจ้าพระยา/.test(x.river)) || list.find(x => ok(x) && x.kind === 'river') || list.find(ok);
   if(!s){
     $('hName').textContent = 'ไม่พบสถานีในรัศมี ' + cfg.radius + ' กม. — ลองเพิ่มรัศมีในตั้งค่า';
     $('hStatus').className = 'pill unk'; $('hStatus').textContent = 'ไม่มีข้อมูล'; return;
@@ -402,11 +406,13 @@ function renderList(list){
   $('rLabel').textContent = cfg.radius;
   document.querySelectorAll('.tWarn').forEach(e => e.textContent = cfg.warnPct);
   if(!list.length){ $('list').innerHTML = '<p class="sub">ยังไม่มีสถานีให้แสดง</p>'; return; }
-  $('list').innerHTML = list.slice(0, 20).map(s => `
+  const rivers = list.filter(s => s.kind === 'river'), canals = list.filter(s => s.kind === 'canal' && fresh(s.time));
+  list = [...rivers.filter(s => fresh(s.time)), ...canals.slice(0, 8), ...rivers.filter(s => !fresh(s.time))];
+  $('list').innerHTML = list.slice(0, 24).map(s => `
     <div class="row">
       <span class="bar bg-${s.status}"></span>
       <div><div class="t">${esc(s.name)}</div>
-        <div class="m">${s.kind === 'canal' ? 'คลอง' : 'แม่น้ำ'} · ${s.dist.toFixed(1)} กม. · ${esc(s.place || s.agency)} · ${s.time ? ago(s.time) : 'ไม่ทราบเวลา'}</div></div>
+        <div class="m">${esc(s.river || (s.kind === 'canal' ? 'คลอง' : 'แม่น้ำ'))} · ${s.dist.toFixed(1)} กม. · ${esc(s.place || s.agency)} · ${s.time ? (fresh(s.time) ? ago(s.time) : 'ไม่ส่งค่ามา ' + ago(s.time)) : 'ไม่ทราบเวลา'}</div></div>
       <div class="v">${s.pct != null ? Math.round(s.pct) + '%' : (s.msl != null ? s.msl.toFixed(2) + ' ม.' : '—')}<small>${LABEL[s.status]}</small></div>
     </div>`).join('');
 }
@@ -419,10 +425,10 @@ function renderMap(list){
     layer = L.layerGroup().addTo(map);
   }
   layer.clearLayers();
-  const col = {safe:'#2E8B57', warn:'#D99A00', crit:'#C62828', unk:'#8A979B'};
+  const col = {safe:'#2E8B57', warn:'#D99A00', crit:'#C62828', unk:'#8A979B', stale:'#8A979B'};
   L.marker([cfg.lat, cfg.lng]).bindPopup('<b>หมู่บ้านมณียา</b><br>TESR HQ').addTo(layer);
   L.circle([cfg.lat, cfg.lng], {radius:cfg.radius * 1000, color:'#1F6E7F', weight:1, fill:false, dashArray:'4 6'}).addTo(layer);
-  list.forEach(s => L.circleMarker([s.lat, s.lng], {radius:9, color:'#fff', weight:2, fillColor:col[s.status], fillOpacity:1})
+  list.filter(s => s.kind === 'river' || fresh(s.time)).forEach(s => L.circleMarker([s.lat, s.lng], {radius:9, color:'#fff', weight:2, fillColor:col[s.status], fillOpacity:1})
     .bindPopup(`<b>${esc(s.name)}</b><br>${LABEL[s.status]}${s.pct != null ? ' · ' + Math.round(s.pct) + '%' : ''}<br>${s.msl != null ? s.msl.toFixed(2) + ' ม.รทก.' : ''}<br>${fmt(s.time)}`).addTo(layer));
 }
 
@@ -431,20 +437,20 @@ function renderCams(data){
   let cams = [];
   if(data){
     findArrays(data, o => Object.keys(o).some(k => /lat/i.test(k))).flat().forEach(c => {
-      const lat = num(pick(c, /lat/i)), lng = num(pick(c, /lon|lng/i));
-      if(!lat || !lng) return;
-      const urls = Object.values(c).filter(v => typeof v === 'string' && /^https?:\/\//.test(v));
-      const img = urls.find(u => /\.(jpe?g|png|gif|webp)(\?|$)/i.test(u));
-      const link = urls.find(u => u !== img) || img;
-      cams.push({lat, lng, img, link, name: txt(pick(c, /title|name/i)) || 'กล้อง CCTV', dist: km(cfg.lat, cfg.lng, lat, lng)});
+      const lat = num(c.lat ?? pick(c, /lat/i)), lng = num(c.long ?? pick(c, /lon|lng/i));
+      if(!lat || !lng || String(c.is_active) === 'False') return;
+      const stream = (String(c.cctv_quicktime || '') + String(c.cctv_flash || '')).match(/https?:\/\/[^"'\s]+\.m3u8/)?.[0];
+      const link = c.cctv_url || stream;
+      if(!link) return;
+      cams.push({lat, lng, link, kind: stream && !c.cctv_url ? 'วิดีโอสด (เปิดบน iPhone/Safari ได้ดีสุด)' : 'ภาพนิ่งล่าสุด',
+        name: txt(c.title) || 'กล้อง CCTV', dist: km(cfg.lat, cfg.lng, lat, lng)});
     });
     cams = cams.filter(c => c.dist <= cfg.radius * 2).sort((a, b) => a.dist - b.dist).slice(0, 8);
   }
   const fixed = `<div class="cam"><b>CCTV ระดับน้ำปากเกร็ด</b><span class="m">ระบบรายงานระดับน้ำผ่านกล้อง (pakkret CCS)</span>
     <a href="https://www.thaiclouderp.com/video/pakkret_water_report.html" target="_blank" rel="noopener">เปิดดูกล้อง</a></div>`;
   box.innerHTML = fixed + cams.map(c => `<div class="cam">
-      ${c.img ? `<img src="${c.img}" alt="${esc(c.name)}" loading="lazy">` : ''}
-      <b>${esc(c.name)}</b><span class="m">${c.dist.toFixed(1)} กม. จากหมู่บ้าน</span>
+      <b>${esc(c.name)}</b><span class="m">${c.dist.toFixed(1)} กม. จากหมู่บ้าน · ${c.kind}</span>
       ${c.link ? `<a href="${c.link}" target="_blank" rel="noopener">เปิดดูกล้อง</a>` : ''}</div>`).join('');
 }
 
@@ -484,7 +490,7 @@ function renderRain(data){
     const p = stationPos(r); if(!p || p.dist > cfg.radius) return null;
     return {...p, mm: num(r.rain_24h) ?? 0, name: txt(r.station?.tele_station_name || pick(r.station, /name/i)) || 'สถานีฝน',
       place: txt(r.geocode?.amphoe_name), time: parseTime(r.rainfall_datetime || pick(r, /datetime/i))};
-  }).filter(Boolean).sort((a, b) => a.dist - b.dist);
+  }).filter(r => r && fresh(r.time)).sort((a, b) => b.mm - a.mm || a.dist - b.dist);
   if(!rows.length){ box.innerHTML = '<p class="sub">ไม่มีสถานีวัดฝนในรัศมีนี้</p>'; $('rainSum').textContent = ''; return; }
   const max = rows.reduce((m, r) => r.mm > m.mm ? r : m, rows[0]);
   $('rainSum').textContent = `ฝนมากที่สุดในรัศมี ${cfg.radius} กม.: ${max.mm.toFixed(1)} มม. ที่ ${max.name} (${rows.length} สถานี)`;
@@ -501,12 +507,14 @@ function renderRoads(data){
   if(!data){ box.innerHTML = '<p class="sub">ดึงข้อมูลถนนไม่สำเร็จ</p>'; return; }
   const rows = findArrays(data, o => Object.keys(o).some(k => /lat/i.test(k)) || 'station' in o).flat().map(r => {
     const p = stationPos(r); if(!p || p.dist > cfg.radius) return null;
-    const cm = num(r.flood_value ?? r.value ?? pick(r, /flood|level/i));
-    return {...p, cm, name: txt(r.station?.tele_station_name || pick(r.station, /name/i) || pick(r, /name/i)) || 'จุดวัดบนถนน',
-      time: parseTime(pick(r, /datetime|date/i))};
-  }).filter(Boolean).sort((a, b) => (b.cm ?? 0) - (a.cm ?? 0));
-  if(!rows.length){ box.innerHTML = `<p class="sub">ไม่มีเซนเซอร์ถนนในรัศมี ${cfg.radius} กม. (ส่วนใหญ่ติดตั้งในกรุงเทพฯ)</p>`; return; }
-  box.innerHTML = rows.slice(0, 10).map(r => { const lv = r.cm == null ? 'unk' : r.cm >= 20 ? 'crit' : r.cm > 5 ? 'warn' : 'safe'; return `
+    const cm = num(r.floodroad_value ?? r.flood_value);
+    return {...p, cm, name: txt(r.station?.floodroad_name || pick(r.station, /name/i)) || 'จุดวัดบนถนน',
+      time: parseTime(r.floodroad_datetime || pick(r, /datetime/i))};
+  }).filter(r => r && fresh(r.time)).sort((a, b) => (b.cm ?? 0) - (a.cm ?? 0));
+  if(!rows.length){ box.innerHTML = `<p class="sub">ไม่มีเซนเซอร์ถนนที่ส่งค่าล่าสุดในรัศมี ${cfg.radius} กม. (ส่วนใหญ่ติดตั้งในกรุงเทพฯ)</p>`; return; }
+  const wet = rows.filter(r => r.cm > 0);
+  if(!wet.length){ box.innerHTML = `<p class="sub">✅ เซนเซอร์ ${rows.length} จุดในรัศมี ${cfg.radius} กม. ไม่พบน้ำบนถนน</p>`; return; }
+  box.innerHTML = `<p class="sub">มีน้ำบนถนน ${wet.length} จาก ${rows.length} จุด</p>` + wet.slice(0, 10).map(r => { const lv = r.cm == null ? 'unk' : r.cm >= 20 ? 'crit' : r.cm > 5 ? 'warn' : 'safe'; return `
     <div class="row"><span class="bar bg-${lv}"></span>
       <div><div class="t">${esc(r.name)}</div><div class="m">${r.dist.toFixed(1)} กม. · ${r.time ? ago(r.time) : ''}</div></div>
       <div class="v">${r.cm != null ? r.cm.toFixed(0) + ' ซม.' : '—'}<small>${lv === 'crit' ? 'รถเล็กควรเลี่ยง' : lv === 'warn' ? 'น้ำขัง' : lv === 'safe' ? 'ผ่านได้' : ''}</small></div></div>`; }).join('');
