@@ -356,8 +356,7 @@ async function refresh(){
     .filter(s => s.dist <= cfg.radius).sort((a, b) => a.dist - b.dist);
 
   renderHero(stations); renderList(stations); renderMap(stations);
-  renderCams(cctv.status === 'fulfilled' ? cctv.value : null);
-  if(cctv.status !== 'fulfilled') errors.push('กล้อง CCTV');
+  renderCams();
 
   const latest = stations.map(s => s.time).filter(fresh).sort((a, b) => b - a)[0];
   $('dataTime').textContent = latest ? fmt(latest) + ' (' + ago(latest) + ')' : '—';
@@ -432,26 +431,15 @@ function renderMap(list){
     .bindPopup(`<b>${esc(s.name)}</b><br>${LABEL[s.status]}${s.pct != null ? ' · ' + Math.round(s.pct) + '%' : ''}<br>${s.msl != null ? s.msl.toFixed(2) + ' ม.รทก.' : ''}<br>${fmt(s.time)}`).addTo(layer));
 }
 
-function renderCams(data){
-  const box = $('cams');
-  let cams = [];
-  if(data){
-    findArrays(data, o => Object.keys(o).some(k => /lat/i.test(k))).flat().forEach(c => {
-      const lat = num(c.lat ?? pick(c, /lat/i)), lng = num(c.long ?? pick(c, /lon|lng/i));
-      if(!lat || !lng || String(c.is_active) === 'False') return;
-      const stream = (String(c.cctv_quicktime || '') + String(c.cctv_flash || '')).match(/https?:\/\/[^"'\s]+\.m3u8/)?.[0];
-      const link = c.cctv_url || stream;
-      if(!link) return;
-      cams.push({lat, lng, link, kind: stream && !c.cctv_url ? 'วิดีโอสด (เปิดบน iPhone/Safari ได้ดีสุด)' : 'ภาพนิ่งล่าสุด',
-        name: txt(c.title) || 'กล้อง CCTV', dist: km(cfg.lat, cfg.lng, lat, lng)});
-    });
-    cams = cams.filter(c => c.dist <= cfg.radius * 2).sort((a, b) => a.dist - b.dist).slice(0, 8);
-  }
-  const fixed = `<div class="cam"><b>CCTV ระดับน้ำปากเกร็ด</b><span class="m">ระบบรายงานระดับน้ำผ่านกล้อง (pakkret CCS)</span>
-    <a href="https://www.thaiclouderp.com/video/pakkret_water_report.html" target="_blank" rel="noopener">เปิดดูกล้อง</a></div>`;
-  box.innerHTML = fixed + cams.map(c => `<div class="cam">
-      <b>${esc(c.name)}</b><span class="m">${c.dist.toFixed(1)} กม. จากหมู่บ้าน · ${c.kind}</span>
-      ${c.link ? `<a href="${c.link}" target="_blank" rel="noopener">เปิดดูกล้อง</a>` : ''}</div>`).join('');
+function renderCams(){
+  // กล้องที่ตรวจแล้วว่ายังออนไลน์ — กล้องใน API ThaiWater (/analyst/cctv) เป็นเซิร์ฟเวอร์เก่าของกรมทรัพยากรน้ำ ส่วนใหญ่ออฟไลน์แล้ว จึงไม่ดึงมาแสดง
+  const CAMS = [
+    {name:'ท่าน้ำนนทบุรี', desc:'กล้องวัดระดับน้ำเจ้าพระยา ท่าน้ำนนทบุรี (ใกล้บ้านที่สุด)', url:'https://cctv-nont.firsttech.co.th/'},
+    {name:'ท่าน้ำปากเกร็ด', desc:'ระบบรายงานระดับน้ำผ่านกล้อง (pakkret CCS)', url:'https://www.thaiclouderp.com/video/pakkret_water_report.html'},
+    {name:'กล้องโทรมาตร กรมชลประทาน', desc:'รวมกล้องระดับน้ำลุ่มเจ้าพระยา', url:'http://water.rid.go.th/hydrology/PORTAL/7-TELE.html'}
+  ];
+  $('cams').innerHTML = CAMS.map(c => `<div class="cam"><b>${c.name}</b><span class="m">${c.desc}</span>
+    <a href="${c.url}" target="_blank" rel="noopener">เปิดดูกล้อง</a></div>`).join('');
 }
 
 /* ---------- trend from history.json ---------- */
