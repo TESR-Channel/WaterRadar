@@ -233,8 +233,8 @@ footer{margin-top:28px;font-size:.8rem;color:var(--muted)}
 const API = 'https://api-v3.thaiwater.net/api/v1/thaiwater30';
 const SNAPSHOT = 'data/latest.json', HISTORY = 'data/history.json'; // เขียนโดย GitHub Actions ทุก 10 นาที
 let HIST = null;
-// ตำแหน่งโดยประมาณของหมู่บ้านมณียา ต.ไทรม้า — แก้ในหน้า "ตั้งค่า" ให้ตรงหมุด Google Maps ได้
-const DEFAULTS = { lat: 13.8600, lng: 100.4800, radius: 15, warnPct: 80, every: 5, proxy: '' };
+// หมุด TESR Co.,LTD. หมู่บ้านมณียามาสเตอร์พีซ รัตนาธิเบศร์ ต.ไทรม้า (จาก Google Maps)
+const DEFAULTS = { lat: 13.8782542, lng: 100.4729873, radius: 15, warnPct: 80, every: 5, proxy: '' };
 let cfg = load();
 let map, layer, timer, countdown, nextAt = 0;
 
