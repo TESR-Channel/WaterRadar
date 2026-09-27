@@ -32,6 +32,16 @@ button{cursor:pointer;border:1px solid var(--line);background:var(--paper);color
 button:focus-visible,input:focus-visible,a:focus-visible{outline:3px solid var(--river-2);outline-offset:2px}
 a{color:var(--river-2)}
 
+/* reference location toggle */
+.loc{display:flex;flex-wrap:wrap;align-items:center;gap:8px 12px;margin-top:14px}
+.seg{display:inline-flex;border:1px solid var(--line);border-radius:999px;overflow:hidden;background:var(--paper)}
+.seg button{border:0;border-radius:0;padding:8px 16px;background:transparent}
+.seg button + button{border-left:1px solid var(--line)}
+.seg button[aria-pressed="true"]{background:var(--river-2);color:#fff;font-weight:700}
+.seg button:disabled{opacity:.6;cursor:progress}
+.loc .note{font-size:.85rem;color:var(--muted)}
+.loc .locerr{font-size:.85rem;color:var(--crit);flex-basis:100%}
+
 /* freshness strip */
 .fresh{display:flex;flex-wrap:wrap;gap:6px 18px;align-items:center;margin:14px 0 22px;padding:10px 14px;border-left:4px solid var(--river-2);background:var(--paper);border-radius:0 8px 8px 0;font-size:.92rem}
 .fresh b{font-weight:700}
@@ -118,6 +128,14 @@ footer{margin-top:28px;font-size:.8rem;color:var(--muted)}
 <main>
   <h1>ระดับน้ำรอบหมู่บ้านมณียา</h1>
   <p class="sub">ต.ไทรม้า อ.เมืองนนทบุรี — แม่น้ำเจ้าพระยาและลำน้ำใกล้เคียง ข้อมูลสดจาก สสน. (thaiwater.net)</p>
+  <div class="loc">
+    <div class="seg" role="group" aria-label="จุดอ้างอิง">
+      <button type="button" id="btnHome" aria-pressed="true">🏠 บ้าน</button>
+      <button type="button" id="btnMe" aria-pressed="false">📍 ตำแหน่งฉัน</button>
+    </div>
+    <span class="note">อ้างอิงจาก: <b id="refLabel">บ้าน (TESR HQ)</b></span>
+    <span class="locerr" id="locErr" role="status"></span>
+  </div>
 
   <div class="fresh" aria-live="polite">
     <span>ข้อมูลล่าสุดจากสถานี: <b id="dataTime">—</b></span>
@@ -205,8 +223,8 @@ footer{margin-top:28px;font-size:.8rem;color:var(--muted)}
   <details>
     <summary>ตั้งค่า</summary>
     <div class="form">
-      <label>ละติจูดหมู่บ้าน<input id="sLat" inputmode="decimal"></label>
-      <label>ลองจิจูดหมู่บ้าน<input id="sLng" inputmode="decimal"></label>
+      <label>ละติจูดบ้าน<input id="sLat" inputmode="decimal"></label>
+      <label>ลองจิจูดบ้าน<input id="sLng" inputmode="decimal"></label>
       <label>รัศมีค้นหา (กม., สูงสุด 30 ตามที่ Actions เก็บ)<input id="sRad" inputmode="numeric"></label>
       <label>เริ่มเฝ้าระวังที่ (% ตลิ่ง)<input id="sWarn" inputmode="numeric"></label>
       <label>อัปเดตอัตโนมัติทุก (นาที)<input id="sEvery" inputmode="numeric"></label>
@@ -214,7 +232,7 @@ footer{margin-top:28px;font-size:.8rem;color:var(--muted)}
     </div>
     <div class="actions">
       <button id="saveBtn" type="button">บันทึกและโหลดใหม่</button>
-      <button id="gpsBtn" type="button">ใช้ตำแหน่งปัจจุบัน</button>
+      <button id="gpsBtn" type="button">ตั้งตำแหน่งปัจจุบันเป็นบ้าน</button>
       <button id="resetBtn" type="button">คืนค่าเริ่มต้น</button>
     </div>
   </details>
@@ -234,7 +252,10 @@ const API = 'https://api-v3.thaiwater.net/api/v1/thaiwater30';
 const SNAPSHOT = 'data/latest.json', HISTORY = 'data/history.json'; // เขียนโดย GitHub Actions ทุก 10 นาที
 let HIST = null;
 // หมุด TESR Co.,LTD. หมู่บ้านมณียามาสเตอร์พีซ รัตนาธิเบศร์ ต.ไทรม้า (จาก Google Maps)
-const DEFAULTS = { lat: 13.8782542, lng: 100.4729873, radius: 15, warnPct: 80, every: 5, proxy: '' };
+const DEFAULTS = { lat: 13.8782542, lng: 100.4729873, radius: 15, warnPct: 80, every: 5, proxy: '', mode: 'home' };
+// จุดอ้างอิงที่ใช้คำนวณระยะ: บ้าน (cfg.lat/lng) หรือตำแหน่ง GPS ของผู้ใช้ (ไม่บันทึกพิกัดผู้ใช้ เก็บแค่โหมด)
+let me = null;
+const REF = { lat: DEFAULTS.lat, lng: DEFAULTS.lng, label: 'บ้าน (TESR HQ)', short: 'บ้าน' };
 let cfg = load();
 let map, layer, timer, countdown, nextAt = 0;
 
@@ -333,9 +354,15 @@ async function refresh(){
     if(r.ok){ const j = await r.json(); if(Date.now() - new Date(j.generated_at) < 3 * 3600e3) snap = j; }
   }catch{}
   try{ const r = await fetch(HISTORY + '?t=' + Date.now(), {cache:'no-store'}); HIST = r.ok ? await r.json() : null; }catch{ HIST = null; }
+  // ไฟล์ snapshot เก็บเฉพาะรัศมีรอบบ้าน ถ้าจุดอ้างอิงออกนอกพื้นที่นั้นต้องดึงสดจาก API แทน
+  const covered = snap && Array.isArray(snap.center) &&
+    km(snap.center[0], snap.center[1], REF.lat, REF.lng) + cfg.radius <= (snap.radius_km || 30) + 0.5;
+  const outside = snap && !covered;
+  if(outside) snap = null;
   const src = (key, path) => snap && Array.isArray(snap.data?.[key]) && snap.sources?.[key]?.fetched_at
     ? Promise.resolve(snap.data[key]) : getJSON(path);
-  $('mode').textContent = snap ? 'ข้อมูลจาก GitHub Actions รอบ ' + fmt(new Date(snap.generated_at)) : 'ดึงสดจาก API (ไม่พบไฟล์ data/latest.json ล่าสุด)';
+  $('mode').textContent = snap ? 'ข้อมูลจาก GitHub Actions รอบ ' + fmt(new Date(snap.generated_at))
+    : outside ? 'จุดอ้างอิงอยู่นอกพื้นที่ที่ระบบเก็บไว้ (30 กม. รอบบ้าน) — ดึงสดจาก API' : 'ดึงสดจาก API (ไม่พบไฟล์ data/latest.json ล่าสุด)';
   const [wl, canal, cctv, rain, road] = await Promise.allSettled([
     src('waterlevel', '/public/waterlevel_load'), src('canal', '/public/canal_waterlevel'), src('cctv', '/analyst/cctv'),
     src('rain', '/public/rain_24h'), src('flood_road', '/public/flood_road')
@@ -352,7 +379,7 @@ async function refresh(){
     findArrays(canal.value, o => 'canal_value' in o || 'canal_datetime' in o).flat().forEach(r => stations.push(normalize(r, 'canal')));
   } else errors.push('ระดับน้ำคลอง');
 
-  stations = stations.filter(s => s.lat && s.lng).map(s => ({...s, dist: km(cfg.lat, cfg.lng, s.lat, s.lng)}))
+  stations = stations.filter(s => s.lat && s.lng).map(s => ({...s, dist: km(REF.lat, REF.lng, s.lat, s.lng)}))
     .filter(s => s.dist <= cfg.radius).sort((a, b) => a.dist - b.dist);
 
   renderHero(stations); renderList(stations); renderMap(stations);
@@ -366,7 +393,8 @@ async function refresh(){
   if(errors.length){
     const e = $('err');
     e.innerHTML = 'ดึงข้อมูลไม่สำเร็จ: ' + errors.join(', ') +
-      (cfg.proxy ? '' : '<br>ถ้าขึ้นทุกครั้ง แปลว่าเบราว์เซอร์ถูกบล็อก CORS — ติดตั้ง proxy (ไฟล์ worker.js) แล้วใส่ URL ใน "ตั้งค่า"');
+      (outside ? '<br>ตำแหน่งของคุณอยู่ไกลจากบ้านเกินพื้นที่ที่ระบบเก็บข้อมูลไว้ กด "🏠 บ้าน" เพื่อกลับไปดูรอบบ้าน หรือใส่ Proxy URL ใน "ตั้งค่า" เพื่อดูได้ทุกที่'
+        : cfg.proxy ? '' : '<br>ถ้าขึ้นทุกครั้ง แปลว่าเบราว์เซอร์ถูกบล็อก CORS — ติดตั้ง proxy (ไฟล์ worker.js) แล้วใส่ URL ใน "ตั้งค่า"');
     e.classList.add('show');
   }
   $('refreshBtn').disabled = false;
@@ -379,7 +407,8 @@ function renderHero(list){
   const s = list.find(x => ok(x) && /เจ้าพระยา/.test(x.river)) || list.find(x => ok(x) && x.kind === 'river') || list.find(ok);
   if(!s){
     $('hName').textContent = 'ไม่พบสถานีในรัศมี ' + cfg.radius + ' กม. — ลองเพิ่มรัศมีในตั้งค่า';
-    $('hStatus').className = 'pill unk'; $('hStatus').textContent = 'ไม่มีข้อมูล'; return;
+    $('hStatus').className = 'pill unk'; $('hStatus').textContent = 'ไม่มีข้อมูล';
+    $('hPct').innerHTML = '—'; $('hFacts').innerHTML = ''; $('hTrend').innerHTML = ''; $('gWater').style.height = '0'; return;
   }
   $('hStatus').className = 'pill ' + s.status; $('hStatus').textContent = LABEL[s.status];
   $('hName').textContent = s.name + (s.river ? ' — ' + s.river : '');
@@ -389,7 +418,7 @@ function renderHero(list){
     ['ระดับตลิ่ง', s.bank != null ? s.bank.toFixed(2) + ' ม.รทก.' : '—'],
     ['ห่างตลิ่ง', s.bank != null && s.msl != null ? (s.bank - s.msl).toFixed(2) + ' ม.' : '—'],
     ['อัตราการไหล', s.discharge != null ? s.discharge.toLocaleString() + ' ลบ.ม./วิ' : '—'],
-    ['ระยะจากบ้าน', s.dist.toFixed(1) + ' กม.'],
+    ['ระยะจาก' + REF.short, s.dist.toFixed(1) + ' กม.'],
     ['เวลาวัด', fmt(s.time) + (s.time ? ' (' + ago(s.time) + ')' : '')]
   ];
   $('hFacts').innerHTML = rows.map(([k, v]) => `<dt>${k}</dt><dd>${v}</dd>`).join('');
@@ -419,14 +448,18 @@ function renderList(list){
 function renderMap(list){
   if(!window.L) return;
   if(!map){
-    map = L.map('map', {scrollWheelZoom:false}).setView([cfg.lat, cfg.lng], 12);
+    map = L.map('map', {scrollWheelZoom:false}).setView([REF.lat, REF.lng], 12);
     L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:18, attribution:'© OpenStreetMap'}).addTo(map);
     layer = L.layerGroup().addTo(map);
   }
   layer.clearLayers();
   const col = {safe:'#2E8B57', warn:'#D99A00', crit:'#C62828', unk:'#8A979B', stale:'#8A979B'};
-  L.marker([cfg.lat, cfg.lng]).bindPopup('<b>หมู่บ้านมณียา</b><br>TESR HQ').addTo(layer);
-  L.circle([cfg.lat, cfg.lng], {radius:cfg.radius * 1000, color:'#1F6E7F', weight:1, fill:false, dashArray:'4 6'}).addTo(layer);
+  L.marker([cfg.lat, cfg.lng]).bindPopup('<b>บ้าน</b><br>TESR HQ หมู่บ้านมณียา').addTo(layer);
+  if(REF.short === 'คุณ' && me){
+    L.circle([me.lat, me.lng], {radius: Math.min(me.acc, 2000), color:'#2563eb', weight:1, fillOpacity:.12}).addTo(layer);
+    L.circleMarker([me.lat, me.lng], {radius:8, color:'#fff', weight:3, fillColor:'#2563eb', fillOpacity:1}).bindPopup('<b>ตำแหน่งของคุณ</b>').addTo(layer);
+  }
+  L.circle([REF.lat, REF.lng], {radius:cfg.radius * 1000, color:'#1F6E7F', weight:1, fill:false, dashArray:'4 6'}).addTo(layer);
   list.filter(s => s.kind === 'river' || fresh(s.time)).forEach(s => L.circleMarker([s.lat, s.lng], {radius:9, color:'#fff', weight:2, fillColor:col[s.status], fillOpacity:1})
     .bindPopup(`<b>${esc(s.name)}</b><br>${LABEL[s.status]}${s.pct != null ? ' · ' + Math.round(s.pct) + '%' : ''}<br>${s.msl != null ? s.msl.toFixed(2) + ' ม.รทก.' : ''}<br>${fmt(s.time)}`).addTo(layer));
 }
@@ -467,7 +500,7 @@ function stationPos(r){
   const st = r.station || r;
   const lat = num(st.tele_station_lat ?? pick(st, /lat/i) ?? pick(r, /lat/i));
   const lng = num(st.tele_station_long ?? pick(st, /lon|lng/i) ?? pick(r, /lon|lng/i));
-  return (lat && lng) ? {lat, lng, dist: km(cfg.lat, cfg.lng, lat, lng)} : null;
+  return (lat && lng) ? {lat, lng, dist: km(REF.lat, REF.lng, lat, lng)} : null;
 }
 function rainLevel(mm){ return mm >= 90 ? ['crit','ฝนหนักมาก'] : mm >= 35 ? ['warn','ฝนหนัก'] : mm >= 10 ? ['safe','ฝนปานกลาง'] : ['safe', mm > 0 ? 'ฝนเล็กน้อย' : 'ไม่มีฝน']; }
 
@@ -519,7 +552,7 @@ function setRadar(mode){
 $('radarStill').onclick = () => setRadar('still');
 $('radarLoop').onclick = () => setRadar('loop');
 function setWindy(){
-  $('windy').src = `https://embed.windy.com/embed2.html?lat=${cfg.lat}&lon=${cfg.lng}&detailLat=${cfg.lat}&detailLon=${cfg.lng}&zoom=9&level=surface&overlay=rain&product=ecmwf&menu=&message=true&marker=true&calendar=now&type=map&location=coordinates&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1`;
+  $('windy').src = `https://embed.windy.com/embed2.html?lat=${REF.lat}&lon=${REF.lng}&detailLat=${REF.lat}&detailLon=${REF.lng}&zoom=9&level=surface&overlay=rain&product=ecmwf&menu=&message=true&marker=true&calendar=now&type=map&location=coordinates&metricWind=km%2Fh&metricTemp=%C2%B0C&radarRange=-1`;
 }
 
 const esc = s => String(s ?? '').replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
@@ -540,14 +573,44 @@ function fillForm(){ $('sLat').value = cfg.lat; $('sLng').value = cfg.lng; $('sR
 $('saveBtn').onclick = () => {
   cfg = {lat: num($('sLat').value) ?? DEFAULTS.lat, lng: num($('sLng').value) ?? DEFAULTS.lng,
     radius: num($('sRad').value) || DEFAULTS.radius, warnPct: num($('sWarn').value) || DEFAULTS.warnPct,
-    every: Math.max(1, num($('sEvery').value) || DEFAULTS.every), proxy: $('sProxy').value.trim()};
-  save(); if(map) map.setView([cfg.lat, cfg.lng], 12); setWindy(); refresh();
+    every: Math.max(1, num($('sEvery').value) || DEFAULTS.every), proxy: $('sProxy').value.trim(), mode: cfg.mode};
+  save(); applyRef();
 };
 $('gpsBtn').onclick = () => navigator.geolocation?.getCurrentPosition(p => { $('sLat').value = p.coords.latitude.toFixed(5); $('sLng').value = p.coords.longitude.toFixed(5); });
-$('resetBtn').onclick = () => { cfg = {...DEFAULTS}; save(); fillForm(); refresh(); };
+$('resetBtn').onclick = () => { cfg = {...DEFAULTS}; save(); fillForm(); applyRef(); };
 $('refreshBtn').onclick = refresh;
 
-fillForm(); setWindy(); refresh();
+/* ---------- จุดอ้างอิง: บ้าน / ตำแหน่งฉัน ---------- */
+function updateRef(){
+  const useMe = cfg.mode === 'me' && me;
+  Object.assign(REF, useMe ? {lat: me.lat, lng: me.lng, label: 'ตำแหน่งของคุณ', short: 'คุณ'}
+                          : {lat: cfg.lat, lng: cfg.lng, label: 'บ้าน (TESR HQ)', short: 'บ้าน'});
+  $('btnHome').setAttribute('aria-pressed', String(!useMe));
+  $('btnMe').setAttribute('aria-pressed', String(!!useMe));
+  $('refLabel').textContent = REF.label + (useMe ? ` (แม่นยำ ±${Math.round(me.acc)} ม.)` : '');
+}
+function applyRef(){
+  updateRef();
+  if(map) map.setView([REF.lat, REF.lng], 12);
+  setWindy(); refresh();
+}
+function locate(){
+  const fail = msg => { $('btnMe').disabled = false; cfg.mode = 'home'; save(); applyRef(); $('locErr').textContent = msg; };
+  if(!navigator.geolocation) return fail('เบราว์เซอร์นี้ไม่รองรับการระบุตำแหน่ง');
+  $('btnMe').disabled = true; $('locErr').textContent = ''; $('refLabel').textContent = 'กำลังหาตำแหน่ง…';
+  navigator.geolocation.getCurrentPosition(p => {
+    me = {lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy};
+    $('btnMe').disabled = false; cfg.mode = 'me'; save(); applyRef();
+  }, e => fail(e.code === 1
+      ? 'ไม่ได้รับอนุญาตให้ใช้ตำแหน่ง — เปิดสิทธิ์ตำแหน่ง (Location) ให้เบราว์เซอร์ในการตั้งค่าของเครื่อง แล้วกดอีกครั้ง'
+      : 'หาตำแหน่งไม่สำเร็จ ลองกดอีกครั้งในที่โล่ง'),
+    {enableHighAccuracy: true, timeout: 15000, maximumAge: 60000});
+}
+$('btnHome').onclick = () => { cfg.mode = 'home'; save(); $('locErr').textContent = ''; applyRef(); };
+$('btnMe').onclick = locate;
+
+fillForm(); updateRef(); setWindy();
+if(cfg.mode === 'me') locate(); else refresh();
 </script>
 </body>
 </html>
